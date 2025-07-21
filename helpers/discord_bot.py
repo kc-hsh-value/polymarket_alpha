@@ -11,7 +11,7 @@ from helpers.correlation_engine import calculate_cosine_similarity
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-from .database import get_unsent_correlations, mark_correlation_as_sent, update_market_prices
+from .database import get_all_active_channel_ids, get_unsent_correlations, mark_correlation_as_sent, update_market_prices
 from .polymarket import get_markets_by_ids_async, get_markets_by_ids_sync
 
 
@@ -109,7 +109,7 @@ async def send_new_correlations():
 
     # 2. FEATURE: Refresh odds with Real-Time Data
     unique_market_ids = list({c['market_id'] for c in correlations})
-    latest_market_data = get_markets_by_ids_sync(unique_market_ids)
+    latest_market_data = await get_markets_by_ids_async(unique_market_ids)
     
     for c in correlations:
         if c['market_id'] in latest_market_data:
@@ -166,15 +166,26 @@ async def send_new_correlations():
         if not is_duplicate:
             final_packages_to_send.append(package_info)
             processed_tweet_embeddings.append(current_tweet_embedding)
+        
     
     print(f"\nAfter de-duplication, {len(final_packages_to_send)} unique messages will be sent.")
 
+    # --- BROADCASTING LOGIC ---
+    subscribed_channel_ids = get_all_active_channel_ids()
+    if not subscribed_channel_ids:
+        print("No subscribed channels to send messages to.")
+        # Mark correlations as "sent" even if no one is subscribed to avoid resending forever
+        for item in final_packages_to_send:
+            for c in item['package']:
+                mark_correlation_as_sent(c['correlation_id'])
+        return 0
     # 7. Connect to Discord and send the final list in priority order
     num_messages = len(final_packages_to_send)
     delay = (CHECK_INTERVAL_SECONDS / 2) / (num_messages + 1) if num_messages > 0 else 0
     print(f"Sending messages with a delay of {delay:.1f} seconds between each.")
     
     # The Discord sending logic remains the same, but loops over `final_packages_to_send`
+    total_sent_count = 0
     intents = discord.Intents.default()
     async with discord.Client(intents=intents) as client:
         try:
@@ -187,6 +198,20 @@ async def send_new_correlations():
                 tweet_group = item['package']
                 # ... (rest of the sending logic from before) ...
                 tweet_data = tweet_group[0]
+                # --- THE FIX IS HERE ---
+                # Before we do the inner grouping, let's calculate the impact score
+                # for every market in the group.
+                for market in tweet_group:
+                    market['impact_score'] = 4 * market['yes_price'] * market['no_price']
+                
+                # Now, use a hybrid key to sort the entire group.
+                # We prioritize relevance heavily, but use impact as a powerful tie-breaker
+                # and to penalize dead markets.
+                tweet_group.sort(
+                    key=lambda m: (m['relevance_score'], m['impact_score']),
+                    reverse=True
+                )
+
                 final_market_list = []
                 # ... (inner grouping logic) ...
 
@@ -220,14 +245,28 @@ async def send_new_correlations():
                 print(f"  - Refreshed prices for {len(market_ids_to_refresh)} markets for Tweet ID {tweet_data['tweet_id']}.")
 
                 embed = await format_grouped_correlation_embed(tweet_data, final_market_list)
-                if isinstance(channel, (discord.TextChannel, discord.Thread)):
-                    await channel.send(embed=embed)
+                for channel_id in subscribed_channel_ids:
+                    try:
+                        channel = client.get_channel(channel_id) or await client.fetch_channel(channel_id)
+                        if channel and isinstance(channel, (discord.TextChannel, discord.Thread)):
+                            await channel.send(embed=embed)
+                    except discord.errors.Forbidden:
+                        print(f"  - No permission to send to channel {channel_id}. Consider removing this subscription.")
+                    except discord.errors.NotFound:
+                        print(f"  - Channel {channel_id} not found. Consider removing this subscription.")
+                    except Exception as e:
+                        print(f"  - An error occurred sending to channel {channel_id}: {e}")
+                
+                # Mark as sent once, after broadcasting to all
+                # if isinstance(channel, (discord.TextChannel, discord.Thread)):
+                #     await channel.send(embed=embed)
                 
                 correlation_ids_to_mark = [c['correlation_id'] for c in tweet_group]
                 for c_id in correlation_ids_to_mark:
                     mark_correlation_as_sent(c_id)
+                total_sent_count += 1
                 await asyncio.sleep(delay)
-            
+
 
         except discord.errors.LoginFailure:
             print("Error: Failed to log in to Discord. Check your bot token.")
@@ -237,3 +276,4 @@ async def send_new_correlations():
             traceback.print_exc()
 
     print("Finished sending correlations and logged out from Discord.")
+    return len(final_packages_to_send) # <-- Correct return value

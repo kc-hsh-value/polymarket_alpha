@@ -97,6 +97,32 @@ def setup_database():
     )
     """)
 
+    # --- CUCLE_LOGS Table ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS cycle_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cycle_number INTEGER NOT NULL,
+        start_time DATETIME NOT NULL,
+        end_time DATETIME,
+        status TEXT NOT NULL, -- e.g., 'SUCCESS', 'FAILED'
+        tweets_fetched INTEGER DEFAULT 0,
+        new_markets_fetched INTEGER DEFAULT 0,
+        correlations_found INTEGER DEFAULT 0,
+        messages_sent INTEGER DEFAULT 0,
+        notes TEXT -- For storing error messages or other info
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS subscriptions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        server_id TEXT NOT NULL UNIQUE, -- Store server ID to allow one sub per server
+        channel_id TEXT NOT NULL,
+        is_active BOOLEAN DEFAULT 1,
+        subscribed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
     conn.commit()
     conn.close()
     print("Database setup complete.")
@@ -339,3 +365,55 @@ def mark_correlation_as_sent(correlation_id: int):
     """, (correlation_id,))
     conn.commit()
     conn.close()
+
+
+
+
+# Add two new functions at the end of the file
+def get_next_cycle_number() -> int:
+    """Gets the last cycle number and increments it."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # Find the highest cycle number, default to 0 if table is empty
+    result = cursor.execute("SELECT MAX(cycle_number) FROM cycle_logs").fetchone()[0]
+    conn.close()
+    return (result or 0) + 1
+
+def log_cycle_stats(stats: dict):
+    """Inserts or updates a cycle's stats in the database."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO cycle_logs (
+            cycle_number, start_time, end_time, status, tweets_fetched,
+            new_markets_fetched, correlations_found, messages_sent, notes
+        ) VALUES (:cycle_number, :start_time, :end_time, :status, :tweets_fetched,
+                  :new_markets_fetched, :correlations_found, :messages_sent, :notes)
+    """, stats)
+    conn.commit()
+    conn.close()
+
+
+
+    # Add new functions at the end of the file
+def add_subscription(server_id: str, channel_id: str):
+    """Adds or updates a subscription for a server."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # Use INSERT OR REPLACE to handle both new subs and updates easily
+    cursor.execute("""
+        INSERT OR REPLACE INTO subscriptions (server_id, channel_id)
+        VALUES (?, ?)
+    """, (server_id, channel_id))
+    conn.commit()
+    conn.close()
+
+def get_all_active_channel_ids() -> List[int]:
+    """Gets a list of all active channel IDs to send messages to."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT channel_id FROM subscriptions WHERE is_active = 1")
+    # Fetch all rows and convert them from (channel_id,) tuples to a simple list of integers
+    channel_ids = [int(row['channel_id']) for row in cursor.fetchall()]
+    conn.close()
+    return channel_ids
