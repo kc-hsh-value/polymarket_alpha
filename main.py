@@ -17,7 +17,7 @@ from helpers.deduplication import deduplicate_raw_tweets
 
 # --- Configuration ---
 # Set the polling interval in seconds. 7200 seconds = 2 hours.
-CHECK_INTERVAL_SECONDS = 7200 
+CHECK_INTERVAL_SECONDS = 5400 
 
 
 async def alpha_cycle_loop(bot_client: discord.Client):
