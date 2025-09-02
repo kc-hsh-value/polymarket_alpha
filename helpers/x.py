@@ -8,8 +8,23 @@ load_dotenv()
 
 # Configuration
 API_KEY = os.getenv("X_API_KEY")  # TODO Replace with your TwitterAPI.io API key. You can find it in https://twitterapi.io/dashboard.
-TARGET_ACCOUNTS = ["unusual_whales", "WatcherGuru", "spectatorindex","Polymarket","whalewatchpoly","rawsalerts","DeItaone", "PolymarketIntel","Megatron_ron"]  # The account you want to monitor
-CHECK_INTERVAL = 7200  # Check every 2 hours (7200 seconds)
+TARGET_ACCOUNTS = [
+    "unusual_whales", 
+    "WatcherGuru", 
+    "spectatorindex",
+    "Polymarket",
+    "whalewatchpoly",
+    "rawsalerts",
+    "DeItaone", 
+    "PolymarketIntel",
+    "Megatron_ron",
+    "BBCBreaking",
+    "Reuters",
+    "AP",
+    "GlobeEyeNews",
+    "visegrad24",
+    "TheEconomist"]  # The account you want to monitor
+CHECK_INTERVAL = 5400  # Check every 2 hours (7200 seconds)
 LAST_CHECKED_TIME = datetime.now(UTC) - timedelta(hours=2)  # Start by checking the last hour
 
 def get_tweets(hours_ago: int = 2) -> List[Dict[str, Any]]:
